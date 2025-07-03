@@ -51,7 +51,7 @@ const Plot = struct {
         O,
         full_block,
         half_sextant,
-    } = .full_block,
+    } = .half_sextant,
 
     fn findEntry(self: *const Plot, val: i32) ?*Pair {
         for (self.data.items, 0..) |p, i|
@@ -163,6 +163,9 @@ pub fn main() !void {
     var bw = std.io.bufferedWriter(stdout);
 
     const symbol = plot.getSymbol();
+    for (symbol) |s| {
+        std.debug.print("{x} ", .{ s });
+    }
     for (0..top_border) |i| {
         const pos = top_border - i;
         if (pos % 5 == 0) {
