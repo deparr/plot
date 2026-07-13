@@ -48,11 +48,13 @@ const Plot = struct {
         star,
         pound,
         equals,
+        plus,
         o,
         O,
         full_block,
         half_sextant,
-    } = .x,
+        braille,
+    } = .full_block,
 
     fn findEntry(self: *const Plot, val: i32) ?*Pair {
         for (self.data.items, 0..) |p, i|
@@ -102,6 +104,7 @@ const Plot = struct {
         "O",
         "█",
         "🬋",
+        "⠃",
     };
 
     fn getSymbol(self: *const Plot) []const u8 {
@@ -112,6 +115,15 @@ const Plot = struct {
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
+    const log = std.log.default;
+
+    if (builtin.os.tag == .windows) {
+        var handle = std.os.windows.CONSOLE.USER_IO.SET_CP(.Output, 65001);
+        const status = try handle.operate(io, null);
+        if (status != .SUCCESS) {
+            log.warn("unable to set code page to UTF-8, unicode likely won't display correctly", .{});
+        }
+    }
 
     var plot = Plot{ .arena = arena };
     try plot.data.ensureTotalCapacity(arena, 80);
@@ -153,15 +165,12 @@ pub fn main(init: std.process.Init) !void {
     var stdout = &stdout_writer.interface;
 
     const symbol = plot.getSymbol();
-    // for (symbol) |s| {
-    //     std.debug.print("{x} ", .{ s });
-    // }
     for (0..top_border) |i| {
         const pos = top_border - i;
         if (pos % 5 == 0) {
-            try stdout.print("{d: >2}|", .{pos});
+            try stdout.print("{d: >2}├", .{pos});
         } else {
-            try stdout.writeAll("  |");
+            try stdout.writeAll("  │");
         }
         for (plot.data.items) |dp| {
             for (0..value_width_max) |_| {
@@ -176,8 +185,8 @@ pub fn main(init: std.process.Init) !void {
         try stdout.writeByte('\n');
     }
 
-    try stdout.writeAll("  ");
-    _ = try stdout.splatByte('-', 2 + plot.data.items.len * (value_width_max + 1));
+    try stdout.writeAll("  └");
+    _ = try stdout.splatByte('-', 1 + plot.data.items.len * (value_width_max + 1));
     try stdout.writeAll("\n   ");
 
     var value_buf: [10]u8 = @splat(' ');
@@ -192,6 +201,7 @@ pub fn main(init: std.process.Init) !void {
 
     try stdout.flush();
 }
+
 
 fn intWidth(i: i32) u32 {
     var width: u32 = 1;
