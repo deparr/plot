@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
+const Io = std.Io;
 
 const Options = struct {
     const Colors = struct {
@@ -51,7 +52,7 @@ const Plot = struct {
         O,
         full_block,
         half_sextant,
-    } = .half_sextant,
+    } = .x,
 
     fn findEntry(self: *const Plot, val: i32) ?*Pair {
         for (self.data.items, 0..) |p, i|
@@ -108,36 +109,24 @@ const Plot = struct {
     }
 };
 
-pub fn main() !void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    const gpa, const is_debug = gpa: {
-        break :gpa switch (builtin.mode) {
-            .Debug, .ReleaseSafe => .{ debug_allocator.allocator(), true },
-            .ReleaseFast, .ReleaseSmall => .{ std.heap.smp_allocator, false },
-        };
-    };
-    defer if (is_debug) {
-        _ = debug_allocator.deinit();
-    };
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
 
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var plot = Plot{ .arena = arena };
+    try plot.data.ensureTotalCapacity(arena, 80);
 
-    var plot = Plot{ .arena = allocator };
-    try plot.data.ensureTotalCapacity(allocator, 80);
-
-    var stdin = std.io.getStdIn().reader();
-    var linebuf: [128]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(linebuf[0..]);
+    var stdin_buf: [256]u8 = undefined;
+    var stdin_reader = std.Io.File.stdin().reader(io, &stdin_buf);
+    var stdin = &stdin_reader.interface;
+    var line_buf: [256]u8 = undefined;
+    var fbs = Io.Writer.fixed(&line_buf);
 
     while (true) {
-        stdin.streamUntilDelimiter(fbs.writer(), '\n', fbs.buffer.len) catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => return err,
-        };
+        const line_len = try stdin.streamDelimiterEnding(&fbs, '\n');
+        if (line_len == 0) break;
 
-        const full_line = fbs.getWritten();
+        const full_line = fbs.buffered();
         const line = std.mem.trim(u8, full_line, &std.ascii.whitespace);
 
         const val = try std.fmt.parseInt(i32, line, 10);
@@ -147,7 +136,8 @@ pub fn main() !void {
             plot.data.appendAssumeCapacity(.{ .value = val, .count = 1 });
         }
 
-        fbs.reset();
+        _ = fbs.consumeAll();
+        stdin.toss(1);
     }
 
     std.sort.pdq(Pair, plot.data.items, {}, Pair.lessThan);
@@ -159,50 +149,48 @@ pub fn main() !void {
     const value_width_max = plot.maxValueWidth();
     const top_border = count_max + 1;
 
-    const stdout = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout);
+    var stdout_writer = Io.File.stdout().writer(io, &line_buf);
+    var stdout = &stdout_writer.interface;
 
     const symbol = plot.getSymbol();
-    for (symbol) |s| {
-        std.debug.print("{x} ", .{ s });
-    }
+    // for (symbol) |s| {
+    //     std.debug.print("{x} ", .{ s });
+    // }
     for (0..top_border) |i| {
         const pos = top_border - i;
         if (pos % 5 == 0) {
-            try bw.writer().print("{d: >2}|", .{pos});
+            try stdout.print("{d: >2}|", .{pos});
         } else {
-            _ = try bw.write("  |");
+            try stdout.writeAll("  |");
         }
         for (plot.data.items) |dp| {
             for (0..value_width_max) |_| {
-                try bw.writer().writeByte(' ');
+                try stdout.writeByte(' ');
             }
             if (pos <= dp.count) {
-                try bw.writer().writeAll(symbol);
+                try stdout.writeAll(symbol);
             } else {
-                try bw.writer().writeByte(' ');
+                try stdout.writeByte(' ');
             }
         }
-        _ = try bw.write("\n");
+        try stdout.writeByte('\n');
     }
 
-    _ = try bw.write("  ");
-    for (0..(plot.data.items.len + 1) * value_width_max) |_| {
-        _ = try bw.write("-");
-    }
-    _ = try bw.write("\n   ");
+    try stdout.writeAll("  ");
+    _ = try stdout.splatByte('-', 2 + plot.data.items.len * (value_width_max + 1));
+    try stdout.writeAll("\n   ");
 
-    var value_buf: [10]u8 = .{' '} ** 10;
+    var value_buf: [10]u8 = @splat(' ');
     assert(value_width_max < value_buf.len);
     for (plot.data.items) |dp| {
         @memset(&value_buf, ' ');
         const space_offset = value_width_max - intWidth(dp.value) + 1;
         _ = try std.fmt.bufPrint(value_buf[space_offset..], "{d}", .{dp.value});
-        try bw.writer().writeAll(value_buf[0..value_width_max + 1]);
+        try stdout.writeAll(value_buf[0..value_width_max + 1]);
     }
-    _ = try bw.write("\n");
+    try stdout.writeByte('\n');
 
-    try bw.flush();
+    try stdout.flush();
 }
 
 fn intWidth(i: i32) u32 {
