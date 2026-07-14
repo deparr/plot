@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
+const flag = @import("flag");
+const stats = @import("stats.zig");
 const Io = std.Io;
 
 const Options = struct {
@@ -18,43 +20,56 @@ const Options = struct {
     };
 };
 
-fn optKind(a: []const u8) enum { short, long, positional } {
-    if (std.mem.startsWith(u8, a, "--")) return .long;
-    if (std.mem.startsWith(u8, a, "-")) return .short;
-    return .positional;
-}
+const Flags = struct {
+    symbol: Symbol = .star,
+    input: []const u8 = "",
+    output: []const u8 = "",
+    delimiter: []const u8 = ",",
+};
 
-const Pair = struct {
-    value: i32,
-    count: u32,
+const Pair = stats.Pair;
 
-    pub fn lessThan(context: void, a: Pair, b: Pair) bool {
-        _ = context;
-        return a.value < b.value;
+const Symbol = enum {
+    x,
+    X,
+    star,
+    pound,
+    equals,
+    plus,
+    o,
+    O,
+    full_block,
+    half_sextant,
+    braille,
+
+    const strings = [_][]const u8{
+        "x",
+        "X",
+        "*",
+        "#",
+        "=",
+        "+",
+        "o",
+        "O",
+        "█",
+        "🬋",
+        "⠃",
+    };
+
+    pub fn string(self: Symbol) []const u8 {
+        return strings[@intFromEnum(self)];
+    }
+
+    comptime {
+        if (@typeInfo(Symbol).@"enum".fields.len != strings.len)
+            @compileError("Symbol variants out of sync with string reprs");
     }
 };
 
 const Plot = struct {
-    kind: enum {
-        line,
-        dot,
-        histogram,
-    } = .dot,
     arena: std.mem.Allocator,
     data: std.ArrayListUnmanaged(Pair) = .empty,
-    symbol: enum {
-        x,
-        X,
-        star,
-        pound,
-        equals,
-        plus,
-        o,
-        O,
-        full_block,
-        half_sextant,
-        braille,
-    } = .full_block,
+    symbol: Symbol,
 
     fn findEntry(self: *const Plot, val: i32) ?*Pair {
         for (self.data.items, 0..) |p, i|
@@ -93,23 +108,12 @@ const Plot = struct {
         return width;
     }
 
-    const symbols = [_][]const u8{
-        "x",
-        "X",
-        "*",
-        "#",
-        "=",
-        "+",
-        "o",
-        "O",
-        "█",
-        "🬋",
-        "⠃",
+    pub const Kind = enum {
+        line,
+        dot,
+        histogram,
+        stats,
     };
-
-    fn getSymbol(self: *const Plot) []const u8 {
-        return symbols[@intFromEnum(self.symbol)];
-    }
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -125,8 +129,22 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var plot = Plot{ .arena = arena };
-    try plot.data.ensureTotalCapacity(arena, 80);
+    const args_raw = try init.minimal.args.toSlice(arena);
+    const args = try flag.Parser(Flags).parse(args_raw, .{ .arena = arena, .collect_positional = true });
+    const flags = args.flags;
+    const commands = args.positional;
+    if (commands.len == 0) {
+        log.err("need at least one plot kind to make", .{});
+        std.process.exit(1);
+    }
+
+    const plot_kind = std.meta.stringToEnum(Plot.Kind, commands[0]) orelse {
+        log.err("unknown plot command: {s}", .{commands[0]});
+        std.process.exit(1);
+    };
+
+    var plot = Plot{ .symbol = flags.symbol, .arena = arena };
+    var data = try std.ArrayList(f32).initCapacity(arena, 80);
 
     var stdin_buf: [256]u8 = undefined;
     var stdin_reader = std.Io.File.stdin().reader(io, &stdin_buf);
@@ -140,31 +158,66 @@ pub fn main(init: std.process.Init) !void {
 
         const full_line = fbs.buffered();
         const line = std.mem.trim(u8, full_line, &std.ascii.whitespace);
+        if (std.mem.startsWith(u8, line, "@@@")) break;
 
-        const val = try std.fmt.parseInt(i32, line, 10);
-        if (plot.findEntry(val)) |entry| {
-            entry.count += 1;
-        } else {
-            plot.data.appendAssumeCapacity(.{ .value = val, .count = 1 });
-        }
+        const val = try std.fmt.parseFloat(f32, line);
+        try data.append(arena, val);
 
         _ = fbs.consumeAll();
         stdin.toss(1);
     }
 
-    std.sort.pdq(Pair, plot.data.items, {}, Pair.lessThan);
+    std.sort.pdq(f32, data.items, {}, std.sort.asc(f32));
+
+    const report = stats.basicStatReport(data.items);
+
+    var stdout_writer = Io.File.stdout().writer(io, &line_buf);
+    var stdout = &stdout_writer.interface;
+
+    if (plot_kind == .stats) {
+        try stdout.print(
+            \\ mean: {d:.2} | 𝜎: {d:.2}
+            \\ median: {d:.2}
+            \\ Q1: {d:.2} | Q3: {d:.2}
+            \\ mode: {d} ({d})
+            \\ min: {d} max: {d}
+            \\
+        ,
+            .{
+                report.mean,
+                report.std_dev,
+                report.median,
+                report.lower_quart,
+                report.upper_quart,
+                report.mode,
+                report.mode_count,
+                report.min,
+                report.max,
+            },
+        );
+        try stdout.flush();
+
+        return;
+    }
+
+    var pairs = try std.ArrayList(stats.Pair).initCapacity(arena, 80);
+    for (data.items) |x| {
+        if (hasValue(pairs.items, x)) |pair| {
+            pair.count += 1;
+        } else {
+            try pairs.append(arena, .{ .value = x, .count = 1 });
+        }
+    }
 
     // todo assume 140 width (2 cells per column + padding at beg/end)
+    plot.data = pairs;
     const plot_width = plot.data.items.len * 2 + 2;
     assert(plot_width < 140);
     const count_max = plot.maxCount();
     const value_width_max = plot.maxValueWidth();
     const top_border = count_max + 1;
 
-    var stdout_writer = Io.File.stdout().writer(io, &line_buf);
-    var stdout = &stdout_writer.interface;
-
-    const symbol = plot.getSymbol();
+    const symbol = plot.symbol.string();
     for (0..top_border) |i| {
         const pos = top_border - i;
         if (pos % 5 == 0) {
@@ -186,7 +239,9 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try stdout.writeAll("  └");
-    _ = try stdout.splatByte('-', 1 + plot.data.items.len * (value_width_max + 1));
+    for (0..(1 + plot.data.items.len * (value_width_max + 1))) |_| {
+        try stdout.writeAll("─");
+    }
     try stdout.writeAll("\n   ");
 
     var value_buf: [10]u8 = @splat(' ');
@@ -195,15 +250,14 @@ pub fn main(init: std.process.Init) !void {
         @memset(&value_buf, ' ');
         const space_offset = value_width_max - intWidth(dp.value) + 1;
         _ = try std.fmt.bufPrint(value_buf[space_offset..], "{d}", .{dp.value});
-        try stdout.writeAll(value_buf[0..value_width_max + 1]);
+        try stdout.writeAll(value_buf[0 .. value_width_max + 1]);
     }
     try stdout.writeByte('\n');
 
     try stdout.flush();
 }
 
-
-fn intWidth(i: i32) u32 {
+fn intWidth(i: f32) u32 {
     var width: u32 = 1;
     if (i < 0) width += 1;
     var ai = @abs(i);
@@ -213,4 +267,13 @@ fn intWidth(i: i32) u32 {
     }
 
     return width;
+}
+
+fn hasValue(pairs: []Pair, value: f32) ?*Pair {
+    const epsilon = @sqrt(std.math.floatEps(f32));
+    for (pairs) |*pair| {
+        if (std.math.approxEqRel(f32, pair.value, value, epsilon))
+            return pair;
+    }
+    return null;
 }

@@ -1,0 +1,12 @@
+.{
+    .name = .plot,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.16.0",
+    .paths = .{
+        "src",
+    },
+    .dependencies = .{
+        .flag = .{ .path = "../arg-parse" },
+    },
+    .fingerprint = 0xbebb8f8967cc4498,
+}
