@@ -130,8 +130,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const args_raw = try init.minimal.args.toSlice(arena);
-    const args = try flag.Parser(Flags).parse(args_raw, .{ .arena = arena, .collect_positional = true });
-    const flags = args.flags;
+    var flags = Flags{};
+    const args = try flag.Parser(Flags).parse(args_raw, &flags, .{ .arena = arena, .collect_positional = true });
     const commands = args.positional;
     if (commands.len == 0) {
         log.err("need at least one plot kind to make", .{});
