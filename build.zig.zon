@@ -7,6 +7,10 @@
     },
     .dependencies = .{
         .flag = .{ .path = "../arg-parse" },
+        .z2d = .{
+            .url = "git+https://github.com/vancluever/z2d#3edb5d1bba7192352c17592a218eca8b646679dc",
+            .hash = "z2d-0.12.0-j5P_HsE8EQAuRulQMsEkrCevU85rTFl4JIOz7uJdCYA-",
+        },
     },
     .fingerprint = 0xbebb8f8967cc4498,
 }
