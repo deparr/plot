@@ -8,7 +8,6 @@ const Allocator = std.mem.Allocator;
 
 const pixel_code_ttf = @embedFile("./fonts/PixelCode.ttf");
 
-
 const Options = struct {
     const Colors = struct {
         const _reset = "\x1b[m";
@@ -29,10 +28,7 @@ const Flags = struct {
     input: []const u8 = "",
     output: []const u8 = "",
     delimiter: []const u8 = ",",
-    render: enum {
-        text,
-        image
-    } = if (builtin.os.tag == .windows) .text else .image,
+    render: enum { text, image } = if (builtin.os.tag == .windows) .text else .image,
 };
 
 const Pair = stats.Pair;
@@ -135,8 +131,7 @@ const Command = enum {
     box,
 };
 
-const DataSet = union(Plot.Kind) {
-};
+const DataSet = union(Plot.Kind) {};
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -152,7 +147,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var flags = Flags{};
-    var commands: []const []const u8 = &[_][]const u8{ "dot" };
+    var commands: []const []const u8 = &[_][]const u8{"dot"};
     {
         const args_raw = try init.minimal.args.toSlice(arena);
         const parsed = try flag.Parser(Flags).parse(arena, args_raw, &flags, .{});
@@ -245,9 +240,10 @@ pub fn main(init: std.process.Init) !void {
         defer canvas.deinit();
         try renderImagePlot(&canvas, plot);
         const pix_buf: []const u8 = @ptrCast(surface.image_surface_rgba.buf);
-        const png_buf: []const u8 = try png.encodeAlloc(init.gpa, pix_buf, 600, 500);
-        defer init.gpa.free(png_buf);
-        try stdout.writeAll(png_buf);
+        try png.encodeStream(stdout, pix_buf, 600, 500);
+        // const png_buf: []const u8 = try png.encodeAlloc(init.gpa, pix_buf, 600, 500);
+        // defer init.gpa.free(png_buf);
+        // try stdout.writeAll(png_buf);
 
         // try writer.print("\x1b]1337;File=size={d};inline=1:", .{ png_buf.len });
         // try std.base64.standard.Encoder.encodeWriter(writer, png_buf);
@@ -327,14 +323,14 @@ fn renderTextPlot(writer: *Io.Writer, plot: Plot) !void {
 const z2d = @import("z2d");
 const png = @import("png.zig");
 
-fn renderImagePlot( c: *z2d.Context, plot: Plot) !void {
+fn renderImagePlot(c: *z2d.Context, plot: Plot) !void {
     const normalized_max_height: f64 = 0.8;
     c.setAntiAliasingMode(.none);
-    try fillRect(c, 0, 0, 600, 500, .{ .rgb = .{1, 1, 1}});
+    try fillRect(c, 0, 0, 600, 500, .{ .rgb = .{ 1, 1, 1 } });
     c.resetPath();
 
-    try fillRect(c, 29, 30, 2, 440, .{ .rgb = .{ 0, 0, 0 } });
-    try fillRect(c, 29, 470, 560, 2, .{ .rgb = .{ 0, 0, 0 } });
+    try strokeLine(c, 30, 30, 30, 470, .{ .rgb = .{ 0, 0, 0 } }, 1);
+    try strokeLine(c, 30, 470, 580, 470, .{ .rgb = .{ 0, 0, 0 } }, 1);
     c.resetPath();
 
     const count_max: f64 = @floatFromInt(plot.maxCount());
@@ -352,19 +348,40 @@ fn renderImagePlot( c: *z2d.Context, plot: Plot) !void {
         try fillRect(c, x, y, bar_width, h, .{ .rgb = .{ 0.14, 0.67, 0.95 } });
     }
 
-    c.setSourceToPixel(.fromColor(.{ .rgb = .{ 0.1, 0.1, 0.1 }}));
+    c.setSourceToPixel(.fromColor(.{ .rgb = .{ 0.1, 0.1, 0.1 } }));
     c.setFontSize(36);
     try c.showText("plot title", 240, 30);
     c.setFontSize(27);
     try c.showText("12345678", 32, 472);
 }
 
-fn fillRect(c: *z2d.Context, x: f64, y: f64, w: f64, h: f64, color: z2d.Color.InitArgs) !void {
+fn drawRect(c: *z2d.Context, x: f64, y: f64, w: f64, h: f64, color: z2d.Color.InitArgs) !void {
     c.setSourceToPixel(.fromColor(color));
     try c.moveTo(x, y);
     try c.lineTo(x + w, y);
     try c.lineTo(x + w, y + h);
     try c.lineTo(x, y + h);
     try c.closePath();
+}
+
+fn strokeRect(c: *z2d.Context, x: f64, y: f64, w: f64, h: f64, color: z2d.Color.InitArgs) !void {
+    try drawRect(c, x, y, w, h, color);
+    try c.stroke();
+}
+
+fn fillRect(c: *z2d.Context, x: f64, y: f64, w: f64, h: f64, color: z2d.Color.InitArgs) !void {
+    try drawRect(c, x, y, w, h, color);
     try c.fill();
 }
+
+fn strokeLine(c: *z2d.Context, x1: f64, y1: f64, x2: f64, y2: f64, color: z2d.Color.InitArgs, width: f64) !void {
+    c.setSourceToPixel(.fromColor(color));
+    const old_line_width = c.getLineWidth();
+    defer c.setLineWidth(old_line_width);
+    c.setLineWidth(width);
+    try c.moveTo(x1, y1);
+    try c.lineTo(x2, y2);
+    try c.closePath();
+    try c.stroke();
+}
+
