@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) !void {
         }),
     });
     main_exe.root_module.addImport("flag", flag_dep.module("flag"));
+    main_exe.root_module.addImport("z2d", z2d_dep.module("z2d"));
 
     const draw_test_exe = b.addExecutable(.{
         .name = "draw",

@@ -50,9 +50,9 @@ fn writePngIHDR(writer: *Io.Writer, width: u32, height: u32) !void {
 }
 
 fn writePngIDAT(writer: *Io.Writer, width: u32, height: u32, data: []const u8) !void {
-    const idat_buf_len = 16384; // this limits the size of our png
+    const idat_buf_len = 16384;
     const flate = std.compress.flate;
-    const scanline_buffer_len = 1200 * 4 + 1; // limits png width and size
+    const scanline_buffer_len = 1200 * 4 + 1;
 
     var zlib_buffer: [std.compress.flate.max_window_len] u8 = undefined;
     var idat_buffer: [idat_buf_len]u8 = undefined;
